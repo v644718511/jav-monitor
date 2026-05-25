@@ -1,8 +1,10 @@
 import os
+import re
 import json
 import requests
 import cloudscraper
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -14,6 +16,7 @@ HEADERS = {
 }
 
 SEEN_FILE = "seen.json"
+DAILY_FILE = "daily.json"
 
 if os.path.exists(SEEN_FILE):
     with open(SEEN_FILE, "r", encoding="utf-8") as f:
@@ -21,28 +24,74 @@ if os.path.exists(SEEN_FILE):
 else:
     seen = {}
 
-def send_photo(caption, photo_url):
+if os.path.exists(DAILY_FILE):
+    with open(DAILY_FILE, "r", encoding="utf-8") as f:
+        daily = json.load(f)
+else:
+    daily = {}
+
+today = datetime.now().strftime("%Y-%m-%d")
+
+if today not in daily:
+    daily = {today: []}
+
+
+def send_photo(caption, photo_url, magnet, page_url):
 
     telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "📎 复制 Magnet",
+                    "url": magnet
+                },
+                {
+                    "text": "🔗 打开页面",
+                    "url": page_url
+                }
+            ]
+        ]
+    }
 
     requests.post(
         telegram_url,
         data={
             "chat_id": CHAT_ID,
             "caption": caption,
-            "photo": photo_url
+            "photo": photo_url,
+            "reply_markup": json.dumps(keyboard)
         }
     )
-send_photo(
-    "✅ 测试成功，你的 Telegram 推送正常",
-    "https://picsum.photos/400/600"
-)
-with open("actresses.txt", "r", encoding="utf-8") as f:
-    actress_urls = [x.strip() for x in f.readlines() if x.strip()]
 
-for actress_url in actress_urls:
+
+def send_message(text):
+
+    telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    requests.post(
+        telegram_url,
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
+    )
+
+
+with open("actresses.txt", "r", encoding="utf-8") as f:
+    actress_lines = [x.strip() for x in f.readlines() if x.strip()]
+
+
+for line in actress_lines:
 
     try:
+
+        actress_name, actress_url = line.split("|")
+
+        actress_name = actress_name.strip()
+
+        actress_url = actress_url.strip()
 
         html = scraper.get(actress_url, headers=HEADERS).text
 
@@ -53,64 +102,121 @@ for actress_url in actress_urls:
         if not cards:
             continue
 
-        latest = cards[0]
+        latest_cards = cards[:5]
 
-        link = latest.find("a")["href"]
+        for latest in latest_cards:
 
-        full_link = "https://javdb.com" + link
+            link = latest.find("a")["href"]
 
-        title = latest.get_text(strip=True)
+            full_link = "https://javdb.com" + link
 
-        if actress_url in seen and seen[actress_url] == full_link:
-            continue
+            if full_link in seen:
+                continue
 
-        video_html = scraper.get(full_link, headers=HEADERS).text
+            title = latest.get_text(" ", strip=True)
 
-        if "magnet" not in video_html.lower():
-            continue
+            code_match = re.search(r"[A-Z]{2,10}-\d+", title)
 
-        video_soup = BeautifulSoup(video_html, "lxml")
+            code = code_match.group(0) if code_match else "未知番号"
 
-        img = video_soup.select_one(".video-cover img")
+            video_html = scraper.get(full_link, headers=HEADERS).text
 
-        cover = ""
+            if "magnet:?" not in video_html:
+                continue
 
-        if img:
-            cover = img.get("src", "")
+            video_soup = BeautifulSoup(video_html, "lxml")
 
-        magnet = "未找到"
+            img = video_soup.select_one(".video-cover img")
 
-        magnets = video_soup.select("a")
+            cover = ""
 
-        for m in magnets:
+            if img:
+                cover = img.get("src", "")
 
-            href = m.get("href", "")
+            magnet = ""
 
-            if href.startswith("magnet:?"):
-                magnet = href
-                break
+            magnets = video_soup.select("a")
 
-        msg = f'''
+            for m in magnets:
+
+                href = m.get("href", "")
+
+                if href.startswith("magnet:?"):
+
+                    magnet = href
+
+                    break
+
+            other_titles = []
+
+            for other in latest_cards[1:5]:
+
+                try:
+
+                    other_title = other.get_text(" ", strip=True)
+
+                    other_match = re.search(r"[A-Z]{2,10}-\d+", other_title)
+
+                    other_code = other_match.group(0) if other_match else "未知"
+
+                    other_titles.append(f"• {other_code}")
+
+                except:
+                    pass
+
+            other_text = "\n".join(other_titles)
+
+            msg = f"""
 🎬 新影片更新
 
-{title}
+👩 演员：
+{actress_name}
+
+🎞 番号：
+{code}
 
 ✅ 已出现磁力链接
 
-📎 磁力：
-{magnet}
+📚 最近影片：
+{other_text}
 
-🔗 页面：
-{full_link}
-'''
+"""
 
-        if cover:
-            send_photo(msg, cover)
+            if cover and magnet:
 
-        seen[actress_url] = full_link
+                send_photo(
+                    msg,
+                    cover,
+                    magnet,
+                    full_link
+                )
+
+            seen[full_link] = True
+
+            daily[today].append(
+                f"{actress_name} - {code}"
+            )
 
     except Exception as e:
+
         print(e)
 
+summary = f"📅 今日更新合集 ({today})\n\n"
+
+today_items = daily.get(today, [])
+
+if today_items:
+
+    for item in today_items:
+
+        summary += f"• {item}\n"
+
+    send_message(summary)
+
 with open(SEEN_FILE, "w", encoding="utf-8") as f:
+
     json.dump(seen, f, ensure_ascii=False, indent=2)
+
+with open(DAILY_FILE, "w", encoding="utf-8") as f:
+
+    json.dump(daily, f, ensure_ascii=False, indent=2)
