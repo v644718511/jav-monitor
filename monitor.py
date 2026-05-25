@@ -18,24 +18,36 @@ HEADERS = {
 SEEN_FILE = "seen.json"
 DAILY_FILE = "daily.json"
 
+# 读取已推送记录
 if os.path.exists(SEEN_FILE):
+
     with open(SEEN_FILE, "r", encoding="utf-8") as f:
+
         seen = json.load(f)
+
 else:
+
     seen = {}
 
+# 每日合集
 if os.path.exists(DAILY_FILE):
+
     with open(DAILY_FILE, "r", encoding="utf-8") as f:
+
         daily = json.load(f)
+
 else:
+
     daily = {}
 
 today = datetime.now().strftime("%Y-%m-%d")
 
 if today not in daily:
+
     daily = {today: []}
 
 
+# Telegram 图片消息
 def send_photo(caption, photo_url, magnet, page_url):
 
     telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -44,11 +56,11 @@ def send_photo(caption, photo_url, magnet, page_url):
         "inline_keyboard": [
             [
                 {
-                    "text": "📎 复制 Magnet",
+                    "text": "📎 Magnet",
                     "url": magnet
                 },
                 {
-                    "text": "🔗 打开页面",
+                    "text": "🔗 页面",
                     "url": page_url
                 }
             ]
@@ -66,6 +78,7 @@ def send_photo(caption, photo_url, magnet, page_url):
     )
 
 
+# Telegram 纯文本消息
 def send_message(text):
 
     telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -79,94 +92,142 @@ def send_message(text):
     )
 
 
+# 读取 actresses.txt
 with open("actresses.txt", "r", encoding="utf-8") as f:
+
     actress_lines = [x.strip() for x in f.readlines() if x.strip()]
 
 
+# 开始循环
 for line in actress_lines:
 
     try:
 
-        actress_name, actress_url = line.split("|")
+        # 支持 名字 | 链接
+        if "|" in line:
 
-        actress_name = actress_name.strip()
+            parts = line.split("|")
 
-        actress_url = actress_url.strip()
+            actress_name = parts[0].strip()
 
+            actress_url = parts[1].strip()
+
+        else:
+
+            actress_name = "未知演员"
+
+            actress_url = line.strip()
+
+        # 打开演员页面
         html = scraper.get(actress_url, headers=HEADERS).text
 
         soup = BeautifulSoup(html, "lxml")
+
+        # 自动读取演员名字
+        if actress_name == "未知演员":
+
+            try:
+
+                title_tag = soup.select_one("h2.title")
+
+                if title_tag:
+
+                    actress_name = title_tag.get_text(strip=True)
+
+            except:
+                pass
 
         cards = soup.select(".movie-list .item")
 
         if not cards:
             continue
 
+        # 检查最近5部
         latest_cards = cards[:5]
 
         for latest in latest_cards:
 
-            link = latest.find("a")["href"]
+            try:
 
-            full_link = "https://javdb.com" + link
+                link = latest.find("a")["href"]
 
-            if full_link in seen:
-                continue
+                full_link = "https://javdb.com" + link
 
-            title = latest.get_text(" ", strip=True)
+                # 去重
+                if full_link in seen:
+                    continue
 
-            code_match = re.search(r"[A-Z]{2,10}-\d+", title)
+                title = latest.get_text(" ", strip=True)
 
-            code = code_match.group(0) if code_match else "未知番号"
+                # 提取番号
+                code_match = re.search(r"[A-Z]{2,10}-\d+", title)
 
-            video_html = scraper.get(full_link, headers=HEADERS).text
+                code = code_match.group(0) if code_match else "未知番号"
 
-            if "magnet:?" not in video_html:
-                continue
+                # 打开影片页
+                video_html = scraper.get(full_link, headers=HEADERS).text
 
-            video_soup = BeautifulSoup(video_html, "lxml")
+                # 没 magnet 跳过
+                if "magnet:?" not in video_html:
+                    continue
 
-            img = video_soup.select_one(".video-cover img")
+                video_soup = BeautifulSoup(video_html, "lxml")
 
-            cover = ""
+                # 封面
+                img = video_soup.select_one(".video-cover img")
 
-            if img:
-                cover = img.get("src", "")
+                cover = ""
 
-            magnet = ""
+                if img:
 
-            magnets = video_soup.select("a")
+                    cover = img.get("src", "")
 
-            for m in magnets:
+                # magnet
+                magnet = ""
 
-                href = m.get("href", "")
+                magnets = video_soup.select("a")
 
-                if href.startswith("magnet:?"):
+                for m in magnets:
 
-                    magnet = href
+                    href = m.get("href", "")
 
-                    break
+                    if href.startswith("magnet:?"):
 
-            other_titles = []
+                        magnet = href
 
-            for other in latest_cards[1:5]:
+                        break
 
-                try:
+                # 最近4部
+                other_titles = []
 
-                    other_title = other.get_text(" ", strip=True)
+                for other in latest_cards[1:5]:
 
-                    other_match = re.search(r"[A-Z]{2,10}-\d+", other_title)
+                    try:
 
-                    other_code = other_match.group(0) if other_match else "未知"
+                        other_title = other.get_text(" ", strip=True)
 
-                    other_titles.append(f"• {other_code}")
+                        other_match = re.search(
+                            r"[A-Z]{2,10}-\d+",
+                            other_title
+                        )
 
-                except:
-                    pass
+                        other_code = (
+                            other_match.group(0)
+                            if other_match
+                            else "未知"
+                        )
 
-            other_text = "\n".join(other_titles)
+                        other_titles.append(
+                            f"• {other_code}"
+                        )
 
-            msg = f"""
+                    except:
+                        pass
+
+                other_text = "\n".join(other_titles)
+
+                # 推送内容
+                msg = f"""
 🎬 新影片更新
 
 👩 演员：
@@ -179,33 +240,41 @@ for line in actress_lines:
 
 📚 最近影片：
 {other_text}
-
 """
 
-            if cover and magnet:
+                # 发送
+                if cover and magnet:
 
-                send_photo(
-                    msg,
-                    cover,
-                    magnet,
-                    full_link
+                    send_photo(
+                        msg,
+                        cover,
+                        magnet,
+                        full_link
+                    )
+
+                # 标记已推送
+                seen[full_link] = True
+
+                # 每日合集
+                daily[today].append(
+                    f"{actress_name} - {code}"
                 )
 
-            seen[full_link] = True
+            except Exception as e:
 
-            daily[today].append(
-                f"{actress_name} - {code}"
-            )
+                print(e)
 
     except Exception as e:
 
         print(e)
 
-summary = f"📅 今日更新合集 ({today})\n\n"
 
+# 每日合集
 today_items = daily.get(today, [])
 
 if today_items:
+
+    summary = f"📅 今日更新合集 ({today})\n\n"
 
     for item in today_items:
 
@@ -213,10 +282,24 @@ if today_items:
 
     send_message(summary)
 
+
+# 保存 seen
 with open(SEEN_FILE, "w", encoding="utf-8") as f:
 
-    json.dump(seen, f, ensure_ascii=False, indent=2)
+    json.dump(
+        seen,
+        f,
+        ensure_ascii=False,
+        indent=2
+    )
 
+
+# 保存 daily
 with open(DAILY_FILE, "w", encoding="utf-8") as f:
 
-    json.dump(daily, f, ensure_ascii=False, indent=2)
+    json.dump(
+        daily,
+        f,
+        ensure_ascii=False,
+        indent=2
+    )
