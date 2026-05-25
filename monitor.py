@@ -33,7 +33,10 @@ def send_photo(caption, photo_url):
             "photo": photo_url
         }
     )
-
+send_photo(
+    "✅ 测试成功，你的 Telegram 推送正常",
+    "https://picsum.photos/400/600"
+)
 with open("actresses.txt", "r", encoding="utf-8") as f:
     actress_urls = [x.strip() for x in f.readlines() if x.strip()]
 
